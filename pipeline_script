@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+
+    environment {
+        PATH = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        DOCKER_IMAGE = "sankalpsolankii/docker-build-push"
+        TAG = "${BUILD_NUMBER}"
+        REGISTRY = "docker.io"
+    }
+
+    stages {
+
+        stage('Clone Code') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/sankalpsolankii/Docker_application-main.git',
+                        credentialsId: 'github-creds'  // Configure in Jenkins credentials
+                    ]]
+                ])
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh '''
+                    echo "Building Docker image: ${DOCKER_IMAGE}:${TAG}"
+                    docker build -t ${DOCKER_IMAGE}:${TAG} .
+                    docker tag ${DOCKER_IMAGE}:${TAG} ${DOCKER_IMAGE}:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Login to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                sh '''
+                echo "Pushing Docker image: ${DOCKER_IMAGE}:${TAG}"
+                docker push ${DOCKER_IMAGE}:${TAG}
+                docker push ${DOCKER_IMAGE}:latest
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker logout || true'
+            // Optional: Clean up old images
+            sh 'docker image prune -f --filter "until=72h" || true'
+        }
+        success {
+            echo "✅ Image pushed successfully: ${DOCKER_IMAGE}:${TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed - check logs"
+        }
+    }
+}
